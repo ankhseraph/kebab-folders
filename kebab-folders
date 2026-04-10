@@ -3,25 +3,38 @@
 TARGET_DIR=""
 DRY_RUN=true
 
+print_usage() {
+    echo "Usage: kebab-folders [OPTIONS] <directory>"
+    echo ""
+    echo "Convert folder names to kebab-case"
+    echo ""
+    echo "Options:"
+    echo "  --execute     Actually rename folders (default is dry-run)"
+    echo "  --dry-run     Preview changes (default)"
+    echo "  --help, -h    Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  kebab-folders ~/Music              Preview changes"
+    echo "  kebab-folders --execute ~/Music    Execute changes"
+}
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --execute)
             DRY_RUN=false
             shift
             ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
         --help|-h)
-            echo "Usage: kebab-folders [OPTIONS] <directory>"
-            echo ""
-            echo "Convert folder names to kebab-case"
-            echo ""
-            echo "Options:"
-            echo "  --execute    Actually rename folders (default is dry-run)"
-            echo "  --help, -h   Show this help message"
-            echo ""
-            echo "Examples:"
-            echo "  kebab-folders ~/Music              Preview changes"
-            echo "  kebab-folders --execute ~/Music   Execute changes"
+            print_usage
             exit 0
+            ;;
+        --)
+            shift
+            break
             ;;
         -*)
             echo "Unknown option: $1"
@@ -48,13 +61,18 @@ fi
 
 TARGET_DIR=$(cd "$TARGET_DIR" && pwd)
 
+lower_ascii() {
+    LC_ALL=C tr '[:upper:]' '[:lower:]'
+}
+
 to_kebab_case() {
     local input="$1"
     local result
-    result=$(echo "$input" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || echo "$input")
-    result=$(echo "$result" | \
-        tr '[:upper:]' '[:lower:]' | \
-        sed "s/['''\`\"]//g" | \
+    result=$(printf '%s' "$input" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || printf '%s' "$input")
+    result=$(printf '%s' "$result" | \
+        tr '\n\r\t' '   ' | \
+        lower_ascii | \
+        sed "s/[\"'\\\`]//g" | \
         sed 's/[^a-z0-9]/-/g' | \
         sed 's/-\+/-/g' | \
         sed 's/^-//' | sed 's/-$//')
@@ -62,8 +80,65 @@ to_kebab_case() {
     echo "$result"
 }
 
-same_name_case_insensitive() {
-    [[ "${1,,}" == "${2,,}" ]]
+same_fs_entry() {
+    local a="$1"
+    local b="$2"
+
+    local sa=""
+    local sb=""
+    if sa=$(stat -c '%d:%i' "$a" 2>/dev/null); then
+        :
+    elif sa=$(stat -f '%d:%i' "$a" 2>/dev/null); then
+        :
+    else
+        return 1
+    fi
+
+    if sb=$(stat -c '%d:%i' "$b" 2>/dev/null); then
+        :
+    elif sb=$(stat -f '%d:%i' "$b" 2>/dev/null); then
+        :
+    else
+        return 1
+    fi
+
+    [[ "$sa" == "$sb" ]]
+}
+
+lower_string() {
+    local s="$1"
+    printf '%s' "$s" | lower_ascii
+}
+
+safe_rename_dir() {
+    local src="$1"
+    local dst="$2"
+
+    if mv "$src" "$dst" 2>/dev/null; then
+        return 0
+    fi
+
+    local parent="${dst%/*}"
+    [[ -z "$parent" ]] && parent="/"
+    local tmp=""
+    local i=0
+    while [[ $i -lt 20 ]]; do
+        tmp="${parent}/.kebab-folders-tmp-$$-$RANDOM"
+        [[ -e "$tmp" ]] || break
+        ((i++))
+    done
+    [[ -n "$tmp" && ! -e "$tmp" ]] || return 1
+
+    if ! mv "$src" "$tmp" 2>/dev/null; then
+        return 1
+    fi
+
+    if mv "$tmp" "$dst" 2>/dev/null; then
+        return 0
+    fi
+
+    mv "$tmp" "$src" 2>/dev/null || true
+    return 1
 }
 
 echo "=== kebab-folders ==="
@@ -74,20 +149,21 @@ echo ""
 changes=0
 errors=0
 
-while IFS= read -r dir; do
+while IFS= read -r -d '' dir; do
     [[ "$dir" == "$TARGET_DIR" ]] && continue
 
-    parent=$(dirname "$dir")
-    basename=$(basename "$dir")
+    parent="${dir%/*}"
+    [[ -z "$parent" ]] && parent="/"
+    basename="${dir##*/}"
     newname=$(to_kebab_case "$basename")
 
     [[ "$basename" == "$newname" ]] && continue
 
     newpath="$parent/$newname"
 
-    if [[ -e "$newpath" ]]; then
-        if ! same_name_case_insensitive "$basename" "$newname"; then
-            echo "CONFLICT: $dir -> $newpath (target exists)"
+    if [[ -e "$newpath" ]] && ! same_fs_entry "$dir" "$newpath"; then
+        if [[ "$(lower_string "$basename")" != "$newname" ]]; then
+            printf 'CONFLICT: %q -> %q (target exists)\n' "$dir" "$newpath"
             ((errors++))
             continue
         fi
@@ -96,16 +172,16 @@ while IFS= read -r dir; do
     ((changes++))
 
     if $DRY_RUN; then
-        echo "$basename -> $newname"
+        printf '%q -> %q\n' "$dir" "$newpath"
     else
-        if mv "$dir" "$newpath" 2>/dev/null; then
-            echo "RENAMED: $basename -> $newname"
+        if safe_rename_dir "$dir" "$newpath"; then
+            printf 'RENAMED: %q -> %q\n' "$dir" "$newpath"
         else
-            echo "ERROR: $dir"
+            printf 'ERROR: %q\n' "$dir"
             ((errors++))
         fi
     fi
-done < <(find "$TARGET_DIR" -type d | awk -F/ '{print NF, $0}' | sort -rn | cut -d' ' -f2-)
+done < <(find "$TARGET_DIR" -depth -type d -print0)
 
 echo ""
 echo "Changes: $changes | Errors: $errors"
@@ -114,4 +190,3 @@ if $DRY_RUN && [[ $changes -gt 0 ]]; then
     echo ""
     echo "Run with --execute to apply changes"
 fi
-

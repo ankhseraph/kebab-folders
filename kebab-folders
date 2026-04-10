@@ -190,3 +190,7 @@ if $DRY_RUN && [[ $changes -gt 0 ]]; then
     echo ""
     echo "Run with --execute to apply changes"
 fi
+
+if [[ $errors -gt 0 ]]; then
+    exit 1
+fi

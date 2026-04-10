@@ -9,6 +9,12 @@ Convert folder names to kebab-case.
 
 You can also run `./kebab-folders.sh` (compat shim).
 
+## Tests
+
+```bash
+./tests/run.sh
+```
+
 ## License
 
 GPLv3

@@ -1,4 +1,12 @@
-#!/usr/bin/env bash
+#!/bin/sh
+
+if [ -z "${BASH_VERSION:-}" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        exec bash "$0" "$@"
+    fi
+    echo "tests/run.sh: bash is required but was not found in PATH" >&2
+    exit 127
+fi
 
 set -euo pipefail
 

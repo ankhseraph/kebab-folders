@@ -1,4 +1,14 @@
-#!/usr/bin/env bash
+#!/bin/sh
+
+if [ -z "${BASH_VERSION:-}" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        exec bash "$0" "$@"
+    fi
+    echo "kebab-folders: bash is required but was not found in PATH" >&2
+    exit 127
+fi
+
+set -euo pipefail
 
 TARGET_DIR=""
 DRY_RUN=true
@@ -125,7 +135,7 @@ safe_rename_dir() {
     while [[ $i -lt 20 ]]; do
         tmp="${parent}/.kebab-folders-tmp-$$-$RANDOM"
         [[ -e "$tmp" ]] || break
-        ((i++))
+        i=$((i + 1))
     done
     [[ -n "$tmp" && ! -e "$tmp" ]] || return 1
 
@@ -164,12 +174,12 @@ while IFS= read -r -d '' dir; do
     if [[ -e "$newpath" ]] && ! same_fs_entry "$dir" "$newpath"; then
         if [[ "$(lower_string "$basename")" != "$newname" ]]; then
             printf 'CONFLICT: %q -> %q (target exists)\n' "$dir" "$newpath"
-            ((errors++))
+            errors=$((errors + 1))
             continue
         fi
     fi
 
-    ((changes++))
+    changes=$((changes + 1))
 
     if $DRY_RUN; then
         printf '%q -> %q\n' "$dir" "$newpath"
@@ -178,7 +188,7 @@ while IFS= read -r -d '' dir; do
             printf 'RENAMED: %q -> %q\n' "$dir" "$newpath"
         else
             printf 'ERROR: %q\n' "$dir"
-            ((errors++))
+            errors=$((errors + 1))
         fi
     fi
 done < <(find "$TARGET_DIR" -depth -type d -print0)
